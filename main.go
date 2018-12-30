@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 	git "gopkg.in/src-d/go-git.v4"
@@ -105,6 +106,8 @@ func IsDescendent(commit *object.Commit, potentials []*object.Commit) (
 	}
 }
 
+var terribleMutex sync.Mutex
+
 func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
 	refs := make(map[string]*plumbing.Hash, len(r.Remotes))
 	for _, remote := range r.Remotes {
@@ -125,7 +128,10 @@ func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
 	// to figure out how to push without updating a local branch and i can't
 	// seem to figure out how to update a local branch without involving the
 	// worktree. no, a push refspec of <hash>:refs/heads/<branch> does not
-	// work.
+	// work. ALSO this means we have to synchronize all calls to this method
+	// system-wide. UGH
+	terribleMutex.Lock()
+	defer terribleMutex.Unlock()
 	wt, err := repo.Worktree()
 	if err != nil {
 		return err
