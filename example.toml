@@ -1,0 +1,7 @@
+addr = "127.0.0.1:8080"
+
+[[repo]]
+  webhook = "/github.com/jtolds/git-repo-syncer"
+  path = "/var/git/git-repo-syncer"
+  remotes = ["github", "gerrit"]
+  branches = ["master"]
