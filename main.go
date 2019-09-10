@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 	errs "github.com/zeebo/errs/v2"
@@ -266,15 +267,21 @@ func Main() error {
 
 type Handler struct {
 	repos map[string]Repo
+	mtxs  map[string]*sync.Mutex
 	slack *Slack
 }
 
 func NewHandler(repos []Repo, slack *Slack) *Handler {
-	m := make(map[string]Repo, len(repos))
-	for _, repo := range repos {
-		m[repo.Webhook] = repo
+	h := &Handler{
+		repos: make(map[string]Repo, len(repos)),
+		mtxs:  make(map[string]*sync.Mutex, len(repos)),
+		slack: slack,
 	}
-	return &Handler{repos: m, slack: slack}
+	for _, repo := range repos {
+		h.repos[repo.Webhook] = repo
+		h.mtxs[repo.Webhook] = &sync.Mutex{}
+	}
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -285,6 +292,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("found handler for %v", repo.Webhook)
+
+	h.mtxs[r.URL.Path].Lock()
+	defer h.mtxs[r.URL.Path].Unlock()
 
 	err := repo.FetchAndSync()
 	if err != nil {
