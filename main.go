@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
 	"sort"
 
 	"github.com/BurntSushi/toml"
-	"github.com/zeebo/errs/v2"
+	errs "github.com/zeebo/errs/v2"
 	git "gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
@@ -243,27 +246,35 @@ func Main() error {
 	}
 
 	var config struct {
-		Addr string
-		Repo []Repo
+		Addr     string
+		SlackURL string
+		Repo     []Repo
 	}
 	_, err := toml.DecodeFile(*configPath, &config)
 	if err != nil {
 		return errs.Errorf("failed parsing config: %w", err)
 	}
+
+	var slack *Slack
+	if config.SlackURL != "" {
+		slack = NewSlack(config.SlackURL)
+	}
+
 	log.Printf("listening on %v", config.Addr)
-	return http.ListenAndServe(config.Addr, NewHandler(config.Repo))
+	return http.ListenAndServe(config.Addr, NewHandler(config.Repo, slack))
 }
 
 type Handler struct {
 	repos map[string]Repo
+	slack *Slack
 }
 
-func NewHandler(repos []Repo) *Handler {
+func NewHandler(repos []Repo, slack *Slack) *Handler {
 	m := make(map[string]Repo, len(repos))
 	for _, repo := range repos {
 		m[repo.Webhook] = repo
 	}
-	return &Handler{repos: m}
+	return &Handler{repos: m, slack: slack}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -277,11 +288,57 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	err := repo.FetchAndSync()
 	if err != nil {
-		log.Printf("failed syncing %v: %+v", repo.Webhook, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		msg := fmt.Sprintf("failed syncing %v: %+v", repo.Webhook, err)
+		log.Println(msg)
+		if h.slack != nil {
+			err = h.slack.Message(msg)
+			if err != nil {
+				log.Printf("failed to alert slack: %v", err)
+			}
+		}
+		http.Error(w, msg, http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("successfully synced")
 	_, _ = w.Write([]byte("success\n"))
+}
+
+type Slack struct {
+	webhook string
+}
+
+func NewSlack(webhook string) *Slack {
+	return &Slack{webhook: webhook}
+}
+
+func (s *Slack) Message(msg string) error {
+	type body struct {
+		Text string `json:"text"`
+	}
+	data, err := json.Marshal(body{Text: msg})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest(http.MethodPost, s.webhook, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected response from slack: %v", resp.Status)
+	}
+	data, err = ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if string(data) != "ok" {
+		return fmt.Errorf("unexpected response from slack: %v", string(data))
+	}
+	return nil
 }
