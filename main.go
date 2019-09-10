@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"sync"
 
 	"github.com/BurntSushi/toml"
 	"github.com/zeebo/errs/v2"
@@ -108,8 +107,6 @@ func IsDescendent(commit *object.Commit, potentials []*object.Commit) (
 	}
 }
 
-var terribleMutex sync.Mutex
-
 func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
 	refs := make(map[string]*plumbing.Hash, len(r.Remotes))
 	for _, remote := range r.Remotes {
@@ -124,33 +121,6 @@ func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
 	latest, err := IdentifyLatest(repo, refs)
 	if err != nil {
 		return errs.Errorf("problem syncing branch %v: %v", branch, err)
-	}
-
-	// TODO: it would be really nice to ignore the worktree but i can't seem
-	// to figure out how to push without updating a local branch and i can't
-	// seem to figure out how to update a local branch without involving the
-	// worktree. no, a push refspec of <hash>:refs/heads/<branch> does not
-	// work. ALSO this means we have to synchronize all calls to this method
-	// system-wide. UGH
-	terribleMutex.Lock()
-	defer terribleMutex.Unlock()
-	wt, err := repo.Worktree()
-	if err != nil {
-		return errs.Wrap(err)
-	}
-	err = wt.Checkout(&git.CheckoutOptions{
-		Branch: plumbing.ReferenceName(fmt.Sprintf("refs/heads/%s", branch)),
-		Create: false,
-	})
-	if err != nil {
-		return errs.Wrap(err)
-	}
-	err = wt.Reset(&git.ResetOptions{
-		Commit: latest.Hash,
-		Mode:   git.HardReset,
-	})
-	if err != nil {
-		return errs.Wrap(err)
 	}
 
 	for remote, hash := range refs {
@@ -228,34 +198,7 @@ func (r *Repo) SyncTag(repo *git.Repository, remote, tag string) error {
 		return errs.Wrap(err)
 	}
 
-	// TODO: it would be really nice to ignore the worktree but i can't seem
-	// to figure out how to push without updating a local branch and i can't
-	// seem to figure out how to update a local branch without involving the
-	// worktree. no, a push refspec of <hash>:refs/heads/<branch> does not
-	// work. ALSO this means we have to synchronize all calls to this method
-	// system-wide. UGH
-	terribleMutex.Lock()
-	defer terribleMutex.Unlock()
-	wt, err := repo.Worktree()
-	if err != nil {
-		return errs.Wrap(err)
-	}
-	err = wt.Checkout(&git.CheckoutOptions{
-		Branch: plumbing.ReferenceName(tag),
-		Create: false,
-	})
-	if err != nil {
-		return errs.Wrap(err)
-	}
-	err = wt.Reset(&git.ResetOptions{
-		Commit: *hash,
-		Mode:   git.HardReset,
-	})
-	if err != nil {
-		return errs.Wrap(err)
-	}
-
-	log.Printf("pushing %s (%v) to %s", tag, hash.String(), remote)
+	log.Printf("pushing %s (%v) to %s", tag, hash, remote)
 	err = repo.Push(&git.PushOptions{
 		RemoteName: remote,
 		RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", tag, tag))}})
@@ -340,5 +283,5 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("successfully synced")
-	w.Write([]byte("success"))
+	_, _ = w.Write([]byte("success\n"))
 }
