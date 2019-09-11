@@ -50,7 +50,7 @@ func (l CommitList) Less(i, j int) bool {
 }
 
 func gitFetch(repoPath string, repo *git.Repository, remote string) error {
-	cmd := exec.Command("git", "fetch", remote)
+	cmd := exec.Command("git", "fetch", remote, "--tags")
 	cmd.Dir = repoPath
 	return cmd.Run()
 }
