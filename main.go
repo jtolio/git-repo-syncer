@@ -49,16 +49,24 @@ func (l CommitList) Less(i, j int) bool {
 	return l[i].Committer.When.Before(l[j].Committer.When)
 }
 
+func cmdRun(cmd *exec.Cmd) error {
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	return errs.Errorf("execution: %v:\n%v", err, string(out))
+}
+
 func gitFetch(repoPath string, repo *git.Repository, remote string) error {
 	cmd := exec.Command("git", "fetch", remote, "--tags")
 	cmd.Dir = repoPath
-	return cmd.Run()
+	return cmdRun(cmd)
 }
 
 func gitPush(repoPath string, repo *git.Repository, remote, ref string) error {
 	cmd := exec.Command("git", "push", remote, fmt.Sprintf("%s:%s", ref, ref))
 	cmd.Dir = repoPath
-	return cmd.Run()
+	return cmdRun(cmd)
 }
 
 func IdentifyLatest(repo *git.Repository,
