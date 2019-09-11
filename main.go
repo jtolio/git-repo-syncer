@@ -63,8 +63,8 @@ func gitFetch(repoPath string, repo *git.Repository, remote string) error {
 	return cmdRun(cmd)
 }
 
-func gitPush(repoPath string, repo *git.Repository, remote, ref string) error {
-	cmd := exec.Command("git", "push", remote, fmt.Sprintf("%s:%s", ref, ref))
+func gitPush(repoPath string, repo *git.Repository, remote, localref, remoteref string) error {
+	cmd := exec.Command("git", "push", remote, fmt.Sprintf("%s:%s", localref, remoteref))
 	cmd.Dir = repoPath
 	return cmdRun(cmd)
 }
@@ -152,7 +152,7 @@ func (r *Repo) SyncBranch(repoPath string, repo *git.Repository, branch string) 
 			continue
 		}
 		log.Printf("updating %v/%s to %v", remote, branch, latest.Hash.String())
-		err = gitPush(repoPath, repo, remote, "refs/heads/"+branch)
+		err = gitPush(repoPath, repo, remote, latest.Hash.String(), "refs/heads/"+branch)
 		if err != nil {
 			return errs.Wrap(err)
 		}
@@ -217,7 +217,7 @@ func (r *Repo) SyncTag(repoPath string, repo *git.Repository, remote, tag string
 	}
 
 	log.Printf("pushing %s (%v) to %s", tag, hash, remote)
-	err = gitPush(repoPath, repo, remote, tag)
+	err = gitPush(repoPath, repo, remote, tag, tag)
 	if err != nil {
 		return errs.Wrap(err)
 	}
