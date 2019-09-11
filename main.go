@@ -9,13 +9,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"sort"
 	"sync"
 
 	"github.com/BurntSushi/toml"
 	errs "github.com/zeebo/errs/v2"
 	git "gopkg.in/src-d/go-git.v4"
-	"gopkg.in/src-d/go-git.v4/config"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
 )
@@ -47,6 +47,18 @@ func (l CommitList) Len() int      { return len(l) }
 func (l CommitList) Swap(i, j int) { l[i], l[j] = l[j], l[i] }
 func (l CommitList) Less(i, j int) bool {
 	return l[i].Committer.When.Before(l[j].Committer.When)
+}
+
+func gitFetch(repoPath string, repo *git.Repository, remote string) error {
+	cmd := exec.Command("git", "fetch", remote)
+	cmd.Dir = repoPath
+	return cmd.Run()
+}
+
+func gitPush(repoPath string, repo *git.Repository, remote, ref string) error {
+	cmd := exec.Command("git", "push", remote, fmt.Sprintf("%s:%s", ref, ref))
+	cmd.Dir = repoPath
+	return cmd.Run()
 }
 
 func IdentifyLatest(repo *git.Repository,
@@ -111,7 +123,7 @@ func IsDescendent(commit *object.Commit, potentials []*object.Commit) (
 	}
 }
 
-func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
+func (r *Repo) SyncBranch(repoPath string, repo *git.Repository, branch string) error {
 	refs := make(map[string]*plumbing.Hash, len(r.Remotes))
 	for _, remote := range r.Remotes {
 		hash, err := repo.ResolveRevision(plumbing.Revision(
@@ -132,31 +144,25 @@ func (r *Repo) SyncBranch(repo *git.Repository, branch string) error {
 			continue
 		}
 		log.Printf("updating %v/%s to %v", remote, branch, latest.Hash.String())
-		err = repo.Push(&git.PushOptions{
-			RemoteName: remote,
-			RefSpecs: []config.RefSpec{config.RefSpec(
-				fmt.Sprintf("refs/heads/%s:refs/heads/%s", branch, branch))}})
-		if err != nil && err != git.NoErrAlreadyUpToDate {
+		err = gitPush(repoPath, repo, remote, "refs/heads/"+branch)
+		if err != nil {
 			return errs.Wrap(err)
 		}
 	}
 	return nil
 }
 
-func (r *Repo) FetchAll(repo *git.Repository) error {
+func (r *Repo) FetchAll(repoPath string, repo *git.Repository) error {
 	for _, remote := range r.Remotes {
-		err := repo.Fetch(&git.FetchOptions{
-			RemoteName: remote,
-			Tags:       git.AllTags,
-		})
-		if err != nil && err != git.NoErrAlreadyUpToDate {
+		err := gitFetch(repoPath, repo, remote)
+		if err != nil {
 			return errs.Wrap(err)
 		}
 	}
 	return nil
 }
 
-func (r *Repo) SyncTags(repo *git.Repository) error {
+func (r *Repo) SyncTags(repoPath string, repo *git.Repository) error {
 	unionTags := make(map[string]struct{})
 	allTags := make(map[string]map[string]struct{})
 
@@ -187,7 +193,7 @@ func (r *Repo) SyncTags(repo *git.Repository) error {
 			if _, ok := allTags[remote][tag]; ok {
 				continue
 			}
-			if err := r.SyncTag(repo, remote, tag); err != nil {
+			if err := r.SyncTag(repoPath, repo, remote, tag); err != nil {
 				return errs.Wrap(err)
 			}
 		}
@@ -196,17 +202,15 @@ func (r *Repo) SyncTags(repo *git.Repository) error {
 	return nil
 }
 
-func (r *Repo) SyncTag(repo *git.Repository, remote, tag string) error {
+func (r *Repo) SyncTag(repoPath string, repo *git.Repository, remote, tag string) error {
 	hash, err := repo.ResolveRevision(plumbing.Revision(tag))
 	if err != nil {
 		return errs.Wrap(err)
 	}
 
 	log.Printf("pushing %s (%v) to %s", tag, hash, remote)
-	err = repo.Push(&git.PushOptions{
-		RemoteName: remote,
-		RefSpecs:   []config.RefSpec{config.RefSpec(fmt.Sprintf("%s:%s", tag, tag))}})
-	if err != nil && err != git.NoErrAlreadyUpToDate {
+	err = gitPush(repoPath, repo, remote, tag)
+	if err != nil {
 		return errs.Wrap(err)
 	}
 
@@ -219,20 +223,20 @@ func (r *Repo) FetchAndSync() error {
 		return errs.Wrap(err)
 	}
 
-	err = r.FetchAll(repo)
+	err = r.FetchAll(r.Path, repo)
 	if err != nil {
 		return errs.Wrap(err)
 	}
 
 	if r.Tags {
-		err := r.SyncTags(repo)
+		err := r.SyncTags(r.Path, repo)
 		if err != nil {
 			return errs.Wrap(err)
 		}
 	}
 
 	for _, branch := range r.Branches {
-		err := r.SyncBranch(repo, branch)
+		err := r.SyncBranch(r.Path, repo, branch)
 		if err != nil {
 			return errs.Wrap(err)
 		}
