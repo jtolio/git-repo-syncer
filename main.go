@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/BurntSushi/toml"
@@ -34,11 +35,12 @@ func main() {
 }
 
 type Repo struct {
-	Webhook  string
-	Path     string
-	Remotes  []string
-	Branches []string
-	Tags     bool
+	Webhook       string
+	Path          string
+	Remotes       []string
+	Branches      []string
+	BranchRenames []string
+	Tags          bool
 }
 
 type CommitList []*object.Commit
@@ -131,11 +133,24 @@ func IsDescendent(commit *object.Commit, potentials []*object.Commit) (
 	}
 }
 
+func (r *Repo) branchByRemote(remote, branch string) string {
+	for _, rename := range r.BranchRenames {
+		parts := strings.Split(rename, ":")
+		if len(parts) != 3 {
+			continue
+		}
+		if remote == parts[0] && branch == parts[1] {
+			return parts[2]
+		}
+	}
+	return branch
+}
+
 func (r *Repo) SyncBranch(repoPath string, repo *git.Repository, branch string) error {
 	refs := make(map[string]*plumbing.Hash, len(r.Remotes))
 	for _, remote := range r.Remotes {
 		hash, err := repo.ResolveRevision(plumbing.Revision(
-			fmt.Sprintf("refs/remotes/%s/%s", remote, branch)))
+			fmt.Sprintf("refs/remotes/%s/%s", remote, r.branchByRemote(remote, branch))))
 		if err != nil {
 			return errs.Wrap(err)
 		}
@@ -151,8 +166,9 @@ func (r *Repo) SyncBranch(repoPath string, repo *git.Repository, branch string) 
 		if latest.Hash == *hash {
 			continue
 		}
-		log.Printf("updating %v/%s to %v", remote, branch, latest.Hash.String())
-		err = gitPush(repoPath, repo, remote, latest.Hash.String(), "refs/heads/"+branch)
+		remoteBranch := r.branchByRemote(remote, branch)
+		log.Printf("updating %v/%s to %v", remote, remoteBranch, latest.Hash.String())
+		err = gitPush(repoPath, repo, remote, latest.Hash.String(), "refs/heads/"+remoteBranch)
 		if err != nil {
 			return errs.Wrap(err)
 		}
