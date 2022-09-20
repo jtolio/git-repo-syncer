@@ -60,7 +60,7 @@ func cmdRun(cmd *exec.Cmd) error {
 }
 
 func gitFetch(repoPath string, repo *git.Repository, remote string) error {
-	cmd := exec.Command("git", "fetch", remote, "--tags")
+	cmd := exec.Command("git", "fetch", "-p", remote, "--tags")
 	cmd.Dir = repoPath
 	return cmdRun(cmd)
 }
