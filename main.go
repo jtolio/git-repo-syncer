@@ -199,7 +199,7 @@ func (r *Repo) SyncTags(repoPath string, repo *git.Repository) error {
 			return errs.Wrap(err)
 		}
 
-		refs, err := rem.List(&git.ListOptions{})
+		refs, err := rem.List(&git.ListOptions{Timeout: 120})
 		if err != nil {
 			return errs.Wrap(err)
 		}
