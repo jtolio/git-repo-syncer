@@ -296,6 +296,8 @@ func Main() error {
 type Handler struct {
 	repos map[string]Repo
 	mtxs  map[string]*sync.Mutex
+	sems  map[string]chan struct{}
+
 	slack *Slack
 }
 
@@ -303,11 +305,13 @@ func NewHandler(repos []Repo, slack *Slack) *Handler {
 	h := &Handler{
 		repos: make(map[string]Repo, len(repos)),
 		mtxs:  make(map[string]*sync.Mutex, len(repos)),
+		sems:  make(map[string]chan struct{}, len(repos)),
 		slack: slack,
 	}
 	for _, repo := range repos {
 		h.repos[repo.Webhook] = repo
 		h.mtxs[repo.Webhook] = &sync.Mutex{}
+		h.sems[repo.Webhook] = make(chan struct{}, 2)
 	}
 	return h
 }
@@ -320,6 +324,32 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("found handler for %v", repo.Webhook)
+
+	// we can be in three states per webhook:
+	// 1) nothing going on
+	// 2) fetching and syncing is happening, but no one is waiting besides
+	//    the initial caller.
+	// 3) fetching and syncing is happening, and more webhooks for this
+	//    repo have come in since the fetch and sync started.
+	// with no protection, #3 can spiral into a very large queue. so we
+	// should cap the amount that can be waiting for the current fetch and
+	// sync to finish at 1. it's not safe to collapse a new call with an
+	// existing fetch and sync call (race conditions), but it is safe to
+	// collapse a new call with a waiting one. so what we'll do is we'll
+	// allow two calls to be in this function per webhook at most - one
+	// doing a fetch and sync, and one waiting (or less). any other calls
+	// beyond that should just get shooed away.
+	sem := h.sems[r.URL.Path]
+	select {
+	default:
+		log.Printf("queued")
+		_, _ = w.Write([]byte("queued\n"))
+		return
+	case sem <- struct{}{}:
+	}
+	defer func() {
+		<-sem
+	}()
 
 	h.mtxs[r.URL.Path].Lock()
 	defer h.mtxs[r.URL.Path].Unlock()
